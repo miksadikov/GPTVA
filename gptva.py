@@ -4,10 +4,17 @@ import vosk, queue, json
 import pyaudio
 import time
 from speechkit import Session, SpeechSynthesis
+from gigachat import GigaChat
+from gigachat.models import Chat, Messages, MessagesRole
 
 openai.api_key = 'YOUR_OPENAI_API_KEY'
 oauth_token = "YOUR_YANDEX_OAUTH_TOKEN"
 catalog_id = "YOUR_YANDEX_CATALOG_ID"
+gigachat_creds = 'YOUR_GIGACHAT_CREDS'
+
+# https://github.com/ai-forever/gigachat
+# https://github.com/TikhonP/yandex-speechkit-lib-python
+# https://habr.com/ru/articles/681566/
 
 # ============================= vosk ===============================
 q = queue.Queue()
@@ -28,6 +35,17 @@ samplerate = int(sd.query_devices(dev_id, 'input')['default_samplerate'])
 # ============================= chatgpt =============================
 messages = [ {"role": "system", "content":
               "You are a intelligent assistant."} ]
+# ============================= gigachat ============================
+payload = Chat(
+    messages=[
+        Messages(
+            role=MessagesRole.SYSTEM,
+            content="Ты голосовой ассистент, который отвечает пользователю на его вопросы."
+        )
+    ],
+    temperature=0.7,
+    max_tokens=100,
+)
 # ===================================================================
 
 # ============================ speechkit ============================
@@ -75,6 +93,10 @@ english = 'английском'
 in_english = False
 russian_voice = 'zahar'
 english_voice = 'john'
+gptmodel = 'gigachat'
+
+if gptmodel == 'gigachat':
+    giga = GigaChat(credentials=gigachat_creds, verify_ssl_certs=False)
 # ===================================================================
 
 try:
@@ -112,11 +134,18 @@ try:
                                 q.queue.clear()
                                 start = time.time()
                     else:
-                        messages.append({"role": "user", "content": data},)
-                        openai_chat = openai.ChatCompletion.create(model="gpt-3.5-turbo", messages=messages)
-                        reply = openai_chat.choices[0].message.content
-                        print(f"ChatGPT: {reply}")
-                        messages.append({"role": "assistant", "content": reply})
+                        if gptmodel == 'chatgpt':
+                            messages.append({"role": "user", "content": data},)
+                            openai_chat = openai.ChatCompletion.create(model="gpt-3.5-turbo", messages=messages)
+                            reply = openai_chat.choices[0].message.content
+                            print(f"ChatGPT: {reply}")
+                            messages.append({"role": "assistant", "content": reply})
+                        else:
+                            payload.messages.append(Messages(role=MessagesRole.USER, content=data))
+                            response = giga.chat(payload)
+                            reply = response.choices[0].message.content
+                            print(f"GigaChat: {reply}")
+                            payload.messages.append(response.choices[0].message)
 
                         audio_data = synthesizeAudio.synthesize_stream(
                             text = reply, voice = voice, format = 'lpcm', sampleRateHertz = sample_rate)
@@ -128,8 +157,7 @@ try:
                 data = json.loads(rec.PartialResult())["partial"]
                 if chat == True:
                     end = time.time()
-                    print(end - start)
-                    if end - start > 10:
+                    if end - start > 30:
                         if in_english:
                             text = 'New chat'
                         else:
