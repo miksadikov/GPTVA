@@ -3,18 +3,30 @@ import sounddevice as sd
 import vosk, queue, json
 import pyaudio
 import time
+import json
+import requests
+import argparse
 from speechkit import Session, SpeechSynthesis
 from gigachat import GigaChat
 from gigachat.models import Chat, Messages, MessagesRole
+
+# https://github.com/ai-forever/gigachat
+# https://github.com/TikhonP/yandex-speechkit-lib-python
+# https://habr.com/ru/articles/681566/
+# https://github.com/roma1n/yandexgpt-api-python-example/blob/main/query.py
+# https://habr.com/ru/articles/780008/
 
 openai.api_key = 'YOUR_OPENAI_API_KEY'
 oauth_token = "YOUR_YANDEX_OAUTH_TOKEN"
 catalog_id = "YOUR_YANDEX_CATALOG_ID"
 gigachat_creds = 'YOUR_GIGACHAT_CREDS'
+yandexgpt_token = 'YOUR_YANDEXGPT_TOKEN'
+yandexgpt_folder_id = 'YOUR_YANDEXGPT_FOLDER_ID'
 
-# https://github.com/ai-forever/gigachat
-# https://github.com/TikhonP/yandex-speechkit-lib-python
-# https://habr.com/ru/articles/681566/
+# ============================ parser ==============================
+parser = argparse.ArgumentParser(description='Bot type')
+parser.add_argument('bot_type', type=str, help='Bot type: chatgpt, gigachat, yandexgpt')
+args = parser.parse_args()
 
 # ============================= vosk ===============================
 q = queue.Queue()
@@ -46,6 +58,27 @@ payload = Chat(
     temperature=0.7,
     max_tokens=100,
 )
+# ============================= yandexgpt ===========================
+
+API_URL = 'https://llm.api.cloud.yandex.net/foundationModels/v1/completion'
+PROMPT = {
+  'modelUri': 'gpt://{}/yandexgpt-lite'.format(yandexgpt_folder_id),
+  'completionOptions': {
+    'stream': False,
+    'temperature': 0.6,
+    'maxTokens': '2000'
+  },
+  'messages': [
+    {
+      'role': 'system',
+      'text': 'Ты голосовой ассистент, который отвечает пользователю на его вопросы.'
+    },
+    {
+      'role': 'user',
+      'text': ''
+    }
+  ]
+}
 # ===================================================================
 
 # ============================ speechkit ============================
@@ -93,14 +126,14 @@ english = 'английском'
 in_english = False
 russian_voice = 'zahar'
 english_voice = 'john'
-gptmodel = 'gigachat'
+gptmodel = args.bot_type
 
 if gptmodel == 'gigachat':
     giga = GigaChat(credentials=gigachat_creds, verify_ssl_certs=False)
 # ===================================================================
 
 try:
-    model = vosk.Model(r"C:\Users\user\Downloads\model_ru")
+    model = vosk.Model(r"path\to\vosk\model_ru")
     with sd.RawInputStream(samplerate=samplerate, blocksize=8000, device=dev_id, dtype='int16', channels=1, callback=(lambda i, f, t, s: q.put(bytes(i)))):
         rec = vosk.KaldiRecognizer(model, samplerate)
 
@@ -116,7 +149,7 @@ try:
                             chat = True
                             if english in data:
                                 voice = english_voice
-                                model = vosk.Model(r"C:\Users\user\Downloads\model_en")
+                                model = vosk.Model(r"path\to\vosk\model_en")
                                 with sd.RawInputStream(samplerate=samplerate, blocksize=8000, device=dev_id, dtype='int16', channels=1, callback=(lambda i, f, t, s: q.put(bytes(i)))):
                                     rec = vosk.KaldiRecognizer(model, samplerate)
                                 audio_data = synthesizeAudio.synthesize_stream(
@@ -140,6 +173,17 @@ try:
                             reply = openai_chat.choices[0].message.content
                             print(f"ChatGPT: {reply}")
                             messages.append({"role": "assistant", "content": reply})
+                        elif gptmodel == 'yandexgpt':
+                            PROMPT['messages'][1]['text'] = data
+                            headers = {
+                                "Content-Type": "application/json",
+                                "Authorization": "Api-Key {}".format(yandexgpt_token)
+                            }
+                            response = requests.post(API_URL, headers=headers, json=PROMPT)
+                            json_str = response.text
+                            json_dict = json.loads(json_str)
+                            reply = json_dict['result']['alternatives'][0]['message']['text']
+                            print(f"YandexGPT: {reply}")
                         else:
                             payload.messages.append(Messages(role=MessagesRole.USER, content=data))
                             response = giga.chat(payload)
