@@ -3,3 +3,5 @@ vosk
 speechkit
 pyaudio
 gigachat
+requests
+argparse
